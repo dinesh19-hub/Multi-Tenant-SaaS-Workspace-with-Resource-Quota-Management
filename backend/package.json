@@ -23,6 +23,6 @@
     "@types/uuid": "^10.0.0",
     "esbuild": "^0.25.0",
     "typescript": "^5.8.2",
-    "vitest": "^3.0.7"
+    "vitest": "^5.0.3"
   }
 }
