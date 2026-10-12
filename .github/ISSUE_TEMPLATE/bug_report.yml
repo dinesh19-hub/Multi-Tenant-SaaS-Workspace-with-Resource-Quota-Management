@@ -1,0 +1,52 @@
+name: Bug Report
+description: Create a report to help us reproduce and fix a bug
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report an issue! Please do not report security vulnerabilities here; refer to `SECURITY.md`.
+  - type: input
+    id: summary
+    attributes:
+      label: Bug Summary
+      description: A clear and concise description of what the bug is.
+      placeholder: e.g., Project creation fails with 500 when quota limit is reached
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: What steps did you take to encounter the problem?
+      placeholder: |
+        1. Go to '...'
+        2. Click on '....'
+        3. Scroll down to '....'
+        4. See error
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment Information
+      description: Provide details about your local setup or live browser environment.
+      value: |
+        - OS: [e.g. Windows 11, macOS Sequoia, Ubuntu 24.04]
+        - Browser: [e.g. Chrome 128, Firefox 130]
+        - Node.js version: [e.g. 22.x]
+        - Environment: [Live AWS Sydney / Local Mock Mode]
+    validations:
+      required: true
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context / Logs
+      description: Add any relevant logs, console errors, or screenshots. Do not include passwords, tokens, or AWS credentials!

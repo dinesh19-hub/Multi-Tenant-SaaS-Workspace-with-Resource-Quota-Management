@@ -1,0 +1,33 @@
+{
+  "name": "multi-tenant-saas-workspace",
+  "version": "1.0.0",
+  "description": "Multi-Tenant SaaS Workspace with Resource Quota Management",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "build:frontend": "npm run build --workspace=frontend",
+    "build:backend": "npm run build --workspace=backend",
+    "test": "npm run test --workspaces",
+    "test:frontend": "npm run test --workspace=frontend",
+    "test:backend": "npm run test --workspace=backend",
+    "lint": "npm run lint --workspaces",
+    "typecheck": "npm run typecheck --workspaces",
+    "dev:frontend": "npm run dev --workspace=frontend",
+    "build:sam": "node scripts/sam-runner.cjs build",
+    "validate:sam": "node scripts/sam-runner.cjs validate --lint --template template.yaml"
+  },
+  "keywords": [
+    "saas",
+    "multi-tenant",
+    "cognito",
+    "dynamodb",
+    "serverless",
+    "react"
+  ],
+  "author": "Dinesh Konda",
+  "license": "MIT"
+}

@@ -1,0 +1,253 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Multi-Tenant SaaS Workspace with Cognito Auth and Quota Management
+
+Parameters:
+  AllowedCorsOrigin:
+    Type: String
+    Default: 'https://main.d2h2pxsqugbcgb.amplifyapp.com'
+    Description: Allowed origin for CORS headers (Amplify deployment URL)
+  AllowedLocalCorsOrigin:
+    Type: String
+    Default: 'http://localhost:5173'
+    Description: Local development origin for CORS headers
+
+Resources:
+  # ============================================================================
+  # 1. Amazon Cognito Identity Infrastructure
+  # ============================================================================
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub "${AWS::StackName}-user-pool"
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+          RequireUppercase: true
+          TemporaryPasswordValidityDays: 7
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+      EmailConfiguration:
+        EmailSendingAccount: COGNITO_DEFAULT # 50 emails/day free allowance
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: false
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub "${AWS::StackName}-web-client"
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false # Browser client MUST NOT have a secret
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      PreventUserExistenceErrors: ENABLED
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+
+  # ============================================================================
+  # 2. Amazon API Gateway HTTP API ($default Stage - No Stage Prefix)
+  # ============================================================================
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: "$default" # Root path without stage segment avoids /v1 duplicate
+      CorsConfiguration:
+        AllowOrigins:
+          - !Ref AllowedCorsOrigin
+          - !Ref AllowedLocalCorsOrigin
+        AllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+          - Authorization
+        MaxAge: 300
+      Auth:
+        DefaultAuthorizer: CognitoJwtAuthorizer
+        Authorizers:
+          CognitoJwtAuthorizer:
+            IdentitySource: "$request.header.Authorization"
+            JwtConfiguration:
+              issuer: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}"
+              audience:
+                - !Ref UserPoolClient
+
+  # ============================================================================
+  # 3. Explicit Least-Privilege IAM Execution Role & Scoped Log Group
+  # ============================================================================
+  ApiHandlerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-api-handler"
+      RetentionInDays: 7
+
+  ApiHandlerExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-api-handler-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: DynamoDBTableAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:BatchWriteItem
+                  - dynamodb:TransactWriteItems
+                Resource:
+                  - !GetAtt SaaSWorkspaceTable.Arn
+                  - !Sub "${SaaSWorkspaceTable.Arn}/index/*"
+        - PolicyName: ScopedCloudWatchLogging
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}-api-handler:log-stream:*"
+
+  # ============================================================================
+  # 4. AWS Lambda API Compute Function
+  # ============================================================================
+  ApiHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-api-handler"
+      Role: !GetAtt ApiHandlerExecutionRole.Arn # Explicit least-privilege role
+      CodeUri: backend/
+      Handler: dist/index.handler
+      Runtime: nodejs22.x
+      Architectures:
+        - arm64
+      MemorySize: 256
+      Timeout: 15
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref SaaSWorkspaceTable
+          ALLOWED_ORIGIN: !Ref AllowedCorsOrigin
+          COGNITO_USER_POOL_ID: !Ref UserPool
+          COGNITO_CLIENT_ID: !Ref UserPoolClient
+          NODE_OPTIONS: "--enable-source-maps"
+      Events:
+        ApiEvent:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /{proxy+}
+            Method: ANY
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: es2022
+        Sourcemap: true
+        EntryPoints:
+          - src/index.ts
+
+  # ============================================================================
+  # 5. Amazon DynamoDB Single-Table Storage
+  # ============================================================================
+  SaaSWorkspaceTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AWS::StackName}-table"
+      BillingMode: PROVISIONED
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+        - AttributeName: GSI1PK
+          AttributeType: S
+        - AttributeName: GSI1SK
+          AttributeType: S
+        - AttributeName: GSI2PK
+          AttributeType: S
+        - AttributeName: GSI2SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: GSI1
+          KeySchema:
+            - AttributeName: GSI1PK
+              KeyType: HASH
+            - AttributeName: GSI1SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+          ProvisionedThroughput:
+            ReadCapacityUnits: 5
+            WriteCapacityUnits: 5
+        - IndexName: GSI2
+          KeySchema:
+            - AttributeName: GSI2PK
+              KeyType: HASH
+            - AttributeName: GSI2SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+          ProvisionedThroughput:
+            ReadCapacityUnits: 5
+            WriteCapacityUnits: 5
+
+Outputs:
+  UserPoolId:
+    Description: Cognito User Pool ID
+    Value: !Ref UserPool
+    Export:
+      Name: !Sub "${AWS::StackName}-UserPoolId"
+
+  UserPoolClientId:
+    Description: Cognito App Client ID (Public Browser Client)
+    Value: !Ref UserPoolClient
+    Export:
+      Name: !Sub "${AWS::StackName}-UserPoolClientId"
+
+  HttpApiUrl:
+    Description: Base URL of the API Gateway HTTP API
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+    Export:
+      Name: !Sub "${AWS::StackName}-HttpApiUrl"
+
+  TableName:
+    Description: DynamoDB Table Name
+    Value: !Ref SaaSWorkspaceTable

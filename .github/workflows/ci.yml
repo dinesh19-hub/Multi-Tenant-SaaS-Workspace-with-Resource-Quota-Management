@@ -1,0 +1,52 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-and-test:
+    name: Build, Test & Validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: 'npm'
+
+      - name: Setup AWS SAM CLI
+        uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript Typecheck
+        run: npm run typecheck
+
+      - name: Code Quality & Linting
+        run: npm run lint
+
+      - name: Run Test Suites (Frontend & Backend)
+        run: npm test
+
+      - name: Build Production Bundles (Frontend & Lambda Backend)
+        run: npm run build
+
+      - name: Validate AWS SAM Template
+        run: npm run validate:sam
+
+      - name: Build Serverless Application (SAM Build)
+        run: npm run build:sam
